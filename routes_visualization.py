@@ -12,7 +12,7 @@ from shapely.geometry import Polygon, Point
 species = 'amewoo'
 resolution = 3
 pathfinding_method = 'fw_vg'
-elevation_limit = 2000
+elevation_limit = 0
 
 st.set_page_config(layout="wide")
 

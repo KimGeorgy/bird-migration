@@ -14,7 +14,8 @@ from pyproj import Geod
 species = 'norwhe'
 resolution = 3
 pathfinding_method = 'fw_vg'
-elevation_limit = 0
+elevation_limit = 3000
+pseudocounts_fraction = 0.1
 
 st.set_page_config(layout="wide", page_title="H3 Route Explorer")
 
@@ -40,7 +41,7 @@ def load_barriers():
 
 @st.cache_data
 def load_cells():
-    df = pd.read_csv(f'{species}/resolution_{resolution}/tables/h3_abundance.csv')
+    df = pd.read_csv(f'{species}/resolution_{resolution}/tables/h3_abundance_{pseudocounts_fraction}.csv')
     df["geometry"] = df["geometry"].apply(wkt.loads)
     gdf = gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")
     _ = gdf.sindex
@@ -113,7 +114,7 @@ with c4:
 # Build map
 # ----------------------------
 center = [df["lat"].mean(), df["lng"].mean()]
-m = folium.Map(location=center, zoom_start=3, tiles="cartodbpositron")
+m = folium.Map(location=center, zoom_start=2, tiles="cartodbpositron")
 
 # H3 grid (optional)
 if show_grid:

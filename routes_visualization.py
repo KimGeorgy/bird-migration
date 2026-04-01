@@ -16,6 +16,8 @@ resolution = 3
 pathfinding_method = 'fw_vg'
 elevation_limit = 3000
 pseudocounts_fraction = 0.1
+DEPARTURE_VALUE = 'value_breeding'
+DESTINATION_VALUE = 'value_wintering'
 
 st.set_page_config(layout="wide", page_title="H3 Route Explorer")
 
@@ -61,11 +63,11 @@ def cells_geojson(_gdf):
 
 @st.cache_data
 def get_departure_cells(_gdf):
-    return set(_gdf.loc[_gdf["value_wintering"] > 0, "cell"])
+    return set(_gdf.loc[_gdf[DEPARTURE_VALUE] > 0, "cell"])
 
 @st.cache_data
 def get_destination_cells(_gdf):
-    return set(_gdf.loc[_gdf["value_breeding"] > 0, "cell"])
+    return set(_gdf.loc[_gdf[DESTINATION_VALUE] > 0, "cell"])
 
 barriers_geo = load_barriers()
 df = load_cells()

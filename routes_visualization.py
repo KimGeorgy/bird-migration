@@ -99,18 +99,38 @@ st.markdown("""
 # ----------------------------
 st.title("H3 Route Explorer")
 
-c1, c2, c3, c4 = st.columns([3, 3, 1, 2])
+c1, c2, c3, c4, c5 = st.columns([3, 3, 2, 2, 1])
 with c1:
-    st.markdown(f"🟢 **Origin:** `{st.session_state.origin or 'none'}`")
+    origin_input = st.text_input("🟢 Origin cell", value=st.session_state.origin or "", placeholder="e.g. 831f1afffffffff")
 with c2:
-    st.markdown(f"🔴 **Target:** `{st.session_state.target or 'none'}`")
+    target_input = st.text_input("🔴 Target cell", value=st.session_state.target or "", placeholder="e.g. 831f1afffffffff")
 with c3:
-    if st.button("Reset"):
+    st.markdown("<div style='margin-top:28px'/>", unsafe_allow_html=True)
+    if st.button("Apply", use_container_width=True):
+        origin_val = origin_input.strip() or None
+        target_val = target_input.strip() or None
+
+        error = False
+        if origin_val and origin_val not in departure_cells:
+            st.warning("Origin is not a valid departure cell.")
+            error = True
+        if target_val and target_val not in destination_cells:
+            st.warning("Target is not a valid destination cell.")
+            error = True
+
+        if not error:
+            st.session_state.origin = origin_val
+            st.session_state.target = target_val
+            st.rerun()
+with c4:
+    st.markdown("<div style='margin-top:28px'/>", unsafe_allow_html=True)
+    if st.button("Reset", use_container_width=True):
         st.session_state.origin = None
         st.session_state.target = None
         st.rerun()
-with c4:
-    show_grid = st.checkbox("Show H3 grid", value=True)
+with c5:
+    st.markdown("<div style='margin-top:28px'/>", unsafe_allow_html=True)
+    show_grid = st.checkbox("Grid", value=True)
 
 # ----------------------------
 # Build map
@@ -131,7 +151,7 @@ if show_grid:
         tooltip=folium.GeoJsonTooltip(fields=["cell"]),
     ).add_to(m)
 
-# Barriers (single GeoJson call for whole multipolygon)
+# Barriers
 folium.GeoJson(
     barriers_geo,
     style_function=lambda x: {
@@ -185,7 +205,7 @@ map_data = st_folium(
 )
 
 # ----------------------------
-# Handle click
+# Handle map click (original behavior)
 # ----------------------------
 if map_data.get("last_clicked"):
     lat = map_data["last_clicked"]["lat"]
@@ -222,4 +242,4 @@ st.subheader("Route details")
 if route_row is not None:
     st.dataframe(route_row.to_frame().T)
 else:
-    st.info("Click a departure cell (wintering) then a destination cell (breeding) to see the route.")
+    st.info("Select a departure cell and destination cell to see the route.")

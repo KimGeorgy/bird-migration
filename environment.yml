@@ -1,0 +1,24 @@
+name: bird-migration
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - ipykernel
+  - jupyterlab
+  - pymc
+  - ipympl
+  - plotly
+  - h3
+  - folium
+  - geopandas
+  - pandas
+  - pyproj
+  - shapely
+  - streamlit
+  - streamlit-folium
+  - antimeridian
+  - rasterio
+  - regionmask
+  - tqdm
+  - cartopy

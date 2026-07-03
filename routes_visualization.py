@@ -4,9 +4,11 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 from shapely import wkt
-from shapely.geometry import Point
+from shapely.geometry import box, shape, Point, LineString, MultiPolygon, Polygon
+from shapely.validation import make_valid
 from shapely import from_wkb
 from pyproj import Geod
+import antimeridian
 
 # ----------------------------
 # Params
@@ -32,19 +34,93 @@ def interpolate_geodesic(path, num_points=10):
     pts = geod.npts(lon1, lat1, lon2, lat2, num_points, initial_idx=0, terminus_idx=0)
     return [[lat, lon] for lon, lat in pts]
 
+def densify_polygon(poly, num_pts=10):
+    def fix_ring(ring):
+        coords = list(ring.coords)
+        new_coords = []
+        for i in range(len(coords) - 1):
+            # Get geodesic points
+            segment = interpolate_geodesic([coords[i][::-1], coords[i+1][::-1]], num_points=num_pts)
+            # Add all points EXCEPT the last one of the segment 
+            # (to avoid duplicating it with the start of the next segment)
+            new_coords.extend([(p[1], p[0]) for p in segment[:-1]])
+        
+        # Add the very last point to close the ring
+        new_coords.append(coords[-1])
+        return new_coords
+
+    if poly.geom_type == 'Polygon':
+        return Polygon(fix_ring(poly.exterior), [fix_ring(h) for h in poly.interiors])
+    elif poly.geom_type == 'MultiPolygon':
+        return MultiPolygon([densify_polygon(p, num_pts) for p in poly.geoms])
+    return poly
+    
 # ----------------------------
 # Load data (all cached)
 # ----------------------------
+# @st.cache_data
+# def load_barriers():
+#     with open(f'{species}/resolution_{resolution}/tables/barrier.wkb', 'rb') as f:
+#         barrier_geom = from_wkb(f.read())
+    
+#     # 1. Create a giant box representing the whole world
+#     # Coordinates: [min_lon, min_lat, max_lon, max_lat]
+#     world_box = box(-180, -90, 180, 90)
+    
+#     # 2. Subtract the barrier from the world
+#     # This creates a polygon with "holes" where the barriers used to be
+#     inverted_barrier = world_box.difference(barrier_geom)
+    
+#     # 3. Use antimeridian to ensure the giant world-polygon doesn't glitch
+#     import antimeridian
+#     fixed_inverted = antimeridian.fix_shape(inverted_barrier)
+    
+#     return fixed_inverted # Return the geometry (Folium handles the interface)
 @st.cache_data
 def load_barriers():
     with open(f'{species}/resolution_{resolution}/tables/barrier.wkb', 'rb') as f:
-        b = from_wkb(f.read())
-    return b.__geo_interface__
+        barrier_geom = from_wkb(f.read())
+    
+    # 1. Densify with the 'no-duplicate' logic
+    densified = densify_polygon(barrier_geom, num_pts=10)
+    
+    # 2. Fix topology BEFORE the difference
+    # We use a tiny buffer (0.00001) instead of 0 to "weld" nearby points 
+    # created by the geodesic math
+    clean_barrier = densified.buffer(0.00001)
+
+    # 3. Old Rendering: The Difference
+    from shapely.geometry import box
+    world_box = box(-180, -90, 180, 90)
+    inverted_barrier = world_box.difference(clean_barrier)
+    
+    # 4. Antimeridian fix (the source of the "lol" lines)
+    import antimeridian
+    fixed = antimeridian.fix_shape(inverted_barrier)
+    
+    if isinstance(fixed, dict):
+        from shapely.geometry import shape
+        return shape(fixed)
+    return fixed
 
 @st.cache_data
 def load_cells():
     df = pd.read_csv(f'{species}/resolution_{resolution}/tables/h3_abundance_{pseudocounts_fraction}.csv')
+    # 1. Load initial WKT to Shapely
     df["geometry"] = df["geometry"].apply(wkt.loads)
+    
+    import antimeridian
+    def fix_and_convert(g):
+        # 2. Fix the antimeridian crossing
+        fixed = antimeridian.fix_shape(g)
+        # 3. CRITICAL: If 'fixed' is a dict, turn it back into a Shapely object
+        if isinstance(fixed, dict):
+            return shape(fixed)
+        return fixed
+
+    df["geometry"] = df["geometry"].apply(fix_and_convert)
+    
+    # Now GeoPandas will be happy because df["geometry"] contains Shapely objects
     gdf = gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")
     _ = gdf.sindex
     return gdf
@@ -141,7 +217,7 @@ m = folium.Map(location=center, zoom_start=2, tiles="cartodbpositron")
 # H3 grid (optional)
 if show_grid:
     folium.GeoJson(
-        cells_json,
+        df[["cell", "geometry"]], # Pass the GDF directly
         style_function=lambda x: {
             "fillColor": "wheat",
             "color": "tan",
@@ -166,8 +242,12 @@ folium.GeoJson(
 def draw_h3(cell, color):
     geom = df.loc[df["cell"] == cell, "geometry"]
     if not geom.empty:
+        import antimeridian
+        # Use fix_shape on the polygon geometry
+        fixed_cell = antimeridian.fix_shape(geom.iloc[0])
+        
         folium.GeoJson(
-            geom.iloc[0].__geo_interface__,
+            fixed_cell,
             style_function=lambda x, c=color: {
                 "fillColor": c,
                 "color": c,
@@ -181,26 +261,48 @@ if st.session_state.origin:
 if st.session_state.target:
     draw_h3(st.session_state.target, "red")
 
+# ----------------------------
 # Route
+# ----------------------------
 route_row = None
 if st.session_state.origin and st.session_state.target:
     key = (st.session_state.origin, st.session_state.target)
     if key in routes_idx.index:
         route_row = routes_idx.loc[key]
         path = route_row["path"]
+        
+        # 1. Your original interpolation logic
         smoothed = []
         for i in range(len(path) - 1):
             smoothed.extend(interpolate_geodesic([path[i], path[i + 1]], num_points=10))
         smoothed.append(path[-1])
-        folium.PolyLine(smoothed, weight=4, color="royalblue").add_to(m)
+        
+        # 2. Convert to (Lon, Lat) for Shapely/Antimeridian
+        path_lon_lat = [(p[1], p[0]) for p in smoothed]
+        line = LineString(path_lon_lat)
+        
+        # 3. Fix the antimeridian crossing
+        import antimeridian
+        fixed_shape = antimeridian.fix_shape(line)
+        
+        # 4. Render to map
+        # Passing fixed_shape directly (works for both dict and shapely types)
+        folium.GeoJson(
+            fixed_shape,
+            style_function=lambda x: {
+                "color": "royalblue",
+                "weight": 4,
+                "opacity": 0.8
+            }
+        ).add_to(m)
 
 # ----------------------------
 # Render map
 # ----------------------------
 map_data = st_folium(
     m,
-    width=1300,
-    height=500,
+    use_container_width=True, # Automatically takes up the full width
+    height=750,               # Increased from 500
     returned_objects=["last_clicked"],
 )
 
